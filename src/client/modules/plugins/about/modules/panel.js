@@ -1,18 +1,17 @@
-/*global
- define
- */
-/*jslint
- browser: true,
- white: true
- */
 define([
-    'promise',
+    'bluebird',
     'kb_common/html',
-    'kb_common/dom'
-], function(Promise, html, dom) {
+    'kb_common/bootstrapUtils',
+    'bootstrap'
+], function (
+    Promise,
+    html,
+    BS
+) {
     'use strict';
     var t = html.tag,
         h1 = t('h1'),
+        h2 = t('h2'),
         p = t('p'),
         div = t('div'),
         a = t('a');
@@ -24,46 +23,91 @@ define([
         var mount, container,
             runtime = config.runtime;
 
-        function greeting() {
-            return p('Hello');
+        function buildBuildInfo() {
+            var buildInfo = runtime.config('buildInfo');
+
+            var info = {
+                builtAt: new Date(buildInfo.builtAt).toLocaleString(),
+                git: {
+                    root: buildInfo.git.root,
+                    commit: {
+                        hash: buildInfo.git.abbreviatedSha,
+                        message: buildInfo.git.commitMessage,
+                        date: new Date(buildInfo.git.committerDate).toLocaleString()
+                    }
+                }
+            };
+
+            return BS.buildPresentableJson(info);
+        }
+
+        function buildLayout() {
+            return div({
+                class: 'container-fluid'
+            }, [
+                div({
+                    class: 'row'
+                }, [
+                    div({
+                        class: 'col-sm-6',
+                        style: {}
+                    }, [
+                        h1('About the KBase User Interface')
+                    ]),
+                    div({
+                        class: 'col-sm-6',
+                        style: {}
+                    })
+                ]),
+                div({
+                    class: 'row'
+                }, [
+
+                    div({
+                        class: 'col-sm-6',
+                        style: {}
+                    }, [
+                        h2('Build'),
+                        buildBuildInfo()
+                    ]),
+                    div({
+                        class: 'col-sm-6',
+                        style: {}
+                    }, [
+                        h2('Dependencies'),
+                        p('dependencies here...')
+                    ])
+                ])
+            ]);
         }
 
         function render() {
-            return [
-                h1('About KBase'),
-                div([
-                    greeting(),
-                    p(['This is KBase, the ...'])
-                ])
-            ];
+            container.innerHTML = buildLayout();
         }
         // Widget API
         function attach(node) {
-            return Promise.try(function() {
+            return Promise.try(function () {
                 mount = node;
                 container = mount.appendChild(document.createElement('div'));
             });
         }
 
         function detach() {
-            return Promise.try(function() {
+            return Promise.try(function () {
                 mount.removeChild(container);
                 container = null;
             });
         }
 
         function start() {
-            return Promise.try(function() {
-                runtime.send('ui', 'setTitle', 'About then FUNctional Site');
-                runtime.send('ui', 'render', {
-                    node: container,
-                    content: html.flatten(render())
-                });
+            return Promise.try(function () {
+                runtime.send('ui', 'setTitle', 'About then KBase User Interface');
+                render();
             });
         }
 
         function stop() {
-            return Promise.try(function() {
+            return Promise.try(function () {
                 runtime.send('ui', 'setTitle', 'Leaving about...');
             });
         }
@@ -77,7 +121,7 @@ define([
     }
 
     return {
-        make: function(config) {
+        make: function (config) {
             return widget(config);
         }
     };

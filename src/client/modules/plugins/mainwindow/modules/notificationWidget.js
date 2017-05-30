@@ -1,41 +1,84 @@
-/*global define */
-/*jslint white: true, browser: true */
 define([
-    'kb_widget/bases/simpleWidget',
+    'bluebird',
     'kb_common/html'
-],
-    function (simpleWidgetFactory, html) {
-        'use strict';
-        function myWidget(config) {           
-            return simpleWidgetFactory.make({
-                runtime: config.runtime,
-                on: {
-                    start: function () {
-                        // Listen for a setTitle message sent to the ui.
-                        // We use the widget convenience function in order to 
-                        // get automatic event listener cleanup. We could almost
-                        // as easily do this ourselves.
-                        this.recv('ui', 'notification', function (data) {
-                            this.set('notification', data);
-                        });
-                    },
-                    render: function (w) {
-                        // Render a simple title.
-                        // NB:this is called whenver the widget thinks it needs 
-                        // to re-render the title, which is essentially when the 
-                        // state is dirty (has been changed) and a heartbeat
-                        // event is captured.
-                        var div = html.tag('div');
-                        return div({style: {fontWeight: 'bold', fontSize: '150%', margin: '15px 0 0 15px'}}, [
-                            this.get('notification')
-                        ]);
-                    }
-                }
-            });
+], function (
+    Promise,
+    html
+) {
+    'use strict';
+
+    var t = html.tag,
+        div = t('div'),
+        table = t('table'),
+        tr = t('tr'),
+        td = t('td');
+
+    function factory(config) {
+        var container;
+
+        function attach(node) {
+            container = node;
         }
+
+        function buildRow(count, label, color) {
+            return div({
+                style: {
+                    verticalAlign: 'middle'
+                }
+            }, [
+                div({
+                    style: {
+                        display: 'inline-block',
+                        width: '40%',
+                        textAlign: 'right',
+                        paddingRight: '3px'
+                    }
+                }, String(count)),
+                div({
+                    style: {
+                        display: 'inline-block',
+                        width: '60%',
+                        color: color
+                    }
+                }, label)
+            ]);
+
+        }
+
+        function start(params) {
+            container.innerHTML = div({
+                style: {
+                    height: '100%',
+                    border: '1px silver solid',
+                    fontSize: '90%'
+                }
+            }, [
+                buildRow(0, 'info', 'blue'),
+                buildRow(0, 'warn', 'orange'),
+                buildRow(0, 'error', 'red')
+            ]);
+        }
+
+        function stop() {
+
+        }
+
+        function detach() {
+
+        }
+
         return {
-            make: function (config) {
-                return myWidget(config);
-            }
+            attach: attach,
+            start: start,
+            stop: stop,
+            detach: detach
         };
-    });
+
+    }
+
+    return {
+        make: function (config) {
+            return factory(config);
+        }
+    };
+});
