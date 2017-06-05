@@ -31,15 +31,54 @@ var Promise = require('bluebird'),
     yaml = require('js-yaml'),
     bower = require('bower'),
     glob = Promise.promisify(require('glob').Glob),
-    ini = require('ini'),
+    exec = require('child_process').exec,
     dir = Promise.promisifyAll(require('node-dir')),
     util = require('util'),
-    git = require('git-repo-info'),
     // disabled - uname package fails to install
     // uname = require('uname'),
     handlebars = require('handlebars');
 
 // UTILS
+
+function gitinfo() {
+    function run(command) {
+        return new Promise(function (resolve, reject) {
+            exec(command, {}, function (err, stdout, stderr) {
+                if (err) {
+                    reject(Error);
+                }
+                if (stderr) {
+                    reject(new Error(stderr));
+                }
+                resolve(stdout);
+            });
+        });
+    }
+
+    return Promise.all([
+            run('git show --format=%H%n%h%n%an%n%at%n%cn%n%ct%n%d'),
+            run('git show --format=%s'),
+            run('git show --format=%N'),
+            run('git config --get remote.origin.url'),
+            run('git rev-parse --abbrev-ref HEAD')
+        ])
+        .spread(function (infoString, subject, notes, url, branch) {
+            var info = infoString.split('\n');
+            return {
+                commitHash: info[0],
+                commitAbbreviatedHash: info[1],
+                authorName: info[2],
+                authorDate: new Date(parseInt(info[3]) * 1000).toISOString(),
+                committerName: info[4],
+                committerDate: new Date(parseInt(info[5]) * 1000).toISOString(),
+                reflogSelector: info[6],
+                subject: subject,
+                commitNotes: notes,
+                originUrl: url,
+                branch
+            };
+        });
+}
 
 function copyFiles(from, to, globExpr) {
     return glob(globExpr, {
@@ -207,7 +246,6 @@ function installModulePackagesFromBower(state) {
         })
         .then(function (installDirs) {
             return Promise.all(installDirs.map(function (installDir) {
-                // console.log('Installing module: ' + installDir.path);
                 return installModule(state, installDir.path);
             }));
         })
@@ -439,7 +477,8 @@ function copyFromBower(state) {
             // in the above spec.
             return Promise.all(copyJobs.map(function (copySpec) {
                 return glob(copySpec.src, {
-                        cwd: state.environment.path.concat(copySpec.cwd).join('/')
+                        cwd: state.environment.path.concat(copySpec.cwd).join('/'),
+                        nodir: true
                     })
                     .then(function (matches) {
                         // Do the copy!
@@ -686,7 +725,6 @@ function copyUiConfig(state) {
                     return mergeObjects([baseConfig].concat(configs));
                 })
                 .then(function (mergedConfigs) {
-                    // console.log('merged', JSON.stringify(mergedConfigs, null, 4));
                     return mutant.saveYaml(configDest.concat(['ui.yml']), mergedConfigs);
                 });
         })
@@ -696,22 +734,24 @@ function copyUiConfig(state) {
 }
 
 function createBuildInfo(state) {
-    var root = state.environment.path,
-        configDest = root.concat(['build', 'client', 'modules', 'config', 'buildInfo.yml']),
-        buildInfo = {
-            features: state.config.features,
-            targets: state.config.targets,
-            stats: state.stats,
-            git: git(),
-            // disabled for now, all uname packages are failing!
-            hostInfo: null,
-            builtAt: new Date().getTime(),
-        };
-    state.buildInfo = buildInfo;
-    // console.log('info', buildInfo, state);
-    return mutant.saveYaml(configDest, { buildInfo: buildInfo })
-        .then(function () {
-            return state;
+    return gitinfo()
+        .then(function (gitInfo) {
+            var root = state.environment.path,
+                configDest = root.concat(['build', 'client', 'modules', 'config', 'buildInfo.yml']),
+                buildInfo = {
+                    features: state.config.features,
+                    targets: state.config.targets,
+                    stats: state.stats,
+                    git: gitInfo,
+                    // disabled for now, all uname packages are failing!
+                    hostInfo: null,
+                    builtAt: new Date().getTime(),
+                };
+            state.buildInfo = buildInfo;
+            return mutant.saveYaml(configDest, { buildInfo: buildInfo })
+                .then(function () {
+                    return state;
+                });
         });
 }
 
@@ -734,7 +774,6 @@ function mergeObjects(listOfObjects) {
                 merge(obj1Value, obj2Value, keyStack.push(key));
                 keyStack.pop();
             } else {
-                // console.log(obj1Type, obj2Type, isSimpleObject(obj1Value), isSimpleObject(obj2Value));
                 throw new Error('Unmergable at ' + keyStack.join('.') + ':' + key);
             }
         });
@@ -822,16 +861,13 @@ function makeDeployConfig(state) {
     return fs.mkdirsAsync(cfgDir.join('/'))
         .then(function () {
             // read yaml an write json deploy configs.
-            // console.log('in', sourceDir.concat(['*.yml']).join('/'));
             return glob(sourceDir.concat(['*.yml']).join('/'), {
                 nodir: true
             });
         })
         .then(function (matches) {
-            // console.log('got ', matches.length, ' matches');
             return Promise.all(matches.map(function (match) {
                 var baseName = path.basename(match);
-                // console.log('found', match);
                 return mutant.loadYaml(match.split('/'))
                     .then(function (config) {
                         mutant.saveJson(cfgDir.concat([baseName + '.json']), config);
@@ -904,13 +940,16 @@ function makeDistBuild(state) {
                             return !reProtected.test(match);
                         })
                         .map(function (match) {
-                            var result = uglify.minify(match, {
-                                output: {
-                                    beautify: false,
-                                    quote_style: 1
-                                }
-                            });
-                            return fs.writeFileAsync(match, result.code);
+                            return fs.readFileAsync(match, 'utf8')
+                                .then(function (contents) {
+                                    var result = uglify.minify(contents, {
+                                        output: {
+                                            beautify: false,
+                                            quote_style: 1
+                                        }
+                                    });
+                                    return fs.writeFileAsync(match, result.code);
+                                });
                         }));
                 });
         })
@@ -939,7 +978,6 @@ function makeModuleVFS(state, whichBuild) {
             // just read in file and build a giant map...            
             var vfs = {};
             var vfsDest = buildPath.concat([whichBuild, 'moduleVfs.js']);
-            //console.log('matches', JSON.stringify(matches));
             return Promise.all(matches
                     .map(function (match) {
                         var relativePath = match.split('/').slice(root.length + 2);
@@ -958,15 +996,11 @@ function makeModuleVFS(state, whichBuild) {
         });
 }
 
-
-
 // STATE
 // initial state
 /*
  * filesystem: an initial set files files
  */
-
-
 
 function main(type) {
     // INPUT
@@ -1007,7 +1041,6 @@ function main(type) {
         })
         .then(function (config) {
             console.log('Creating initial state with config: ');
-            // console.log(config);
             return mutant.createInitialState(config);
         })
         .then(function (state) {
